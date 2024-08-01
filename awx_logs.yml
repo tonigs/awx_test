@@ -1,0 +1,47 @@
+---
+- name: Capture logs from Kubernetes pod and upload to Minio
+  hosts: localhost
+  gather_facts: no
+  vars:
+    namespace: "{{ namespace }}"
+    pod_name: "{{ pod_name }}"
+    minio_bucket: "your-minio-bucket"
+    minio_access_key: "{{ minio_access_key }}"
+    minio_secret_key: "{{ minio_secret_key }}"
+    minio_endpoint_url: "http://minio-service:9000"  # Replace with your Minio service URL
+
+  tasks:
+    - name: Capture logs from Kubernetes pod
+      k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ pod_name }}"
+      register: pod_info
+
+    - name: Fetch logs from pod
+      k8s_exec:
+        namespace: "{{ namespace }}"
+        pod: "{{ pod_name }}"
+        command: cat
+        container: "{{ item.name }}"
+      with_items: "{{ pod_info.resources | map(attribute='spec.containers') | list | flatten }}"
+      register: pod_logs
+
+    - name: Save logs to file
+      copy:
+        content: "{{ item.stdout }}"
+        dest: "/tmp/{{ pod_name }}_logs.txt"
+      with_items: "{{ pod_logs.results }}"
+      when: item.changed
+
+    - name: Upload logs to Minio
+      aws_s3:
+        bucket: "{{ minio_bucket }}"
+        object: "{{ pod_name }}_logs.txt"
+        src: "/tmp/{{ pod_name }}_logs.txt"
+        mode: put
+      vars:
+        aws_access_key: "{{ minio_access_key }}"
+        aws_secret_key: "{{ minio_secret_key }}"
+        s3_url: "{{ minio_endpoint_url }}"
