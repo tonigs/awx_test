@@ -1,0 +1,10 @@
+- name: Add host
+    awx.awx.host:
+      controller_host: "{{ ansible_url }}"
+      controller_username: "{{ your_username }}"
+      controller_password: "{{ your_password }}"
+      name: "{{ host_name }}"
+      description: Local Host test
+      inventory: "{{ inventory_id_winrm }}"
+      site: Default
+      state: present
