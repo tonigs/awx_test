@@ -15,10 +15,30 @@
     log_file_path: "/tmp/{{ pod_name }}_logs.txt"
 
   tasks:
+    - name: Debugging variables
+      debug:
+        msg:
+          - "Namespace: {{ namespace }}"
+          - "Pod Name: {{ pod_name }}"
+          - "Minio Bucket: {{ minio_bucket }}"
+          - "Log File Path: {{ log_file_path }}"
+          - "Minio Endpoint URL: {{ minio_endpoint_url }}"
+
     - name: Ensure kubectl is installed
       command: "which kubectl"
       register: kubectl_check
       failed_when: kubectl_check.rc != 0
+      ignore_errors: yes
+
+    - name: Debug kubectl_check
+      debug:
+        msg: "Kubectl is installed at: {{ kubectl_check.stdout }}"
+      when: kubectl_check.rc == 0
+
+    - name: Error if kubectl is not installed
+      fail:
+        msg: "kubectl is not installed or not found in PATH. Please install kubectl."
+      when: kubectl_check.rc != 0
 
     - name: Get the list of containers in the pod
       community.kubernetes.k8s_info:
@@ -27,17 +47,52 @@
         namespace: "{{ namespace }}"
         name: "{{ pod_name }}"
       register: pod_info
+      ignore_errors: yes
+
+    - name: Debug pod_info
+      debug:
+        var: pod_info
+
+    - name: Error if no pod information is found
+      fail:
+        msg: "Failed to retrieve pod information. Please check if the pod name and namespace are correct."
+      when: pod_info.resources is not defined or pod_info.resources | length == 0
 
     - name: Fetch logs from each container
       command: >
         kubectl logs -n {{ namespace }} {{ pod_name }} -c {{ item.name }}
       loop: "{{ pod_info.resources[0].spec.containers }}"
       register: pod_logs
+      ignore_errors: yes
+
+    - name: Debug pod_logs
+      debug:
+        var: pod_logs
+
+    - name: Error if logs could not be retrieved
+      fail:
+        msg: "Failed to retrieve logs from the pod containers. Check if the pod and containers are running."
+      when: pod_logs.results is not defined or pod_logs.results | length == 0
 
     - name: Save logs to file
       copy:
         content: "{{ pod_logs.results | map(attribute='stdout') | join('\n') }}"
         dest: "{{ log_file_path }}"
+      ignore_errors: yes
+
+    - name: Debug log file creation
+      debug:
+        msg: "Logs saved to {{ log_file_path }}"
+
+    - name: Check if log file exists
+      stat:
+        path: "{{ log_file_path }}"
+      register: log_file
+
+    - name: Error if log file does not exist
+      fail:
+        msg: "Log file {{ log_file_path }} was not created."
+      when: not log_file.stat.exists
 
     - name: Upload logs to Minio
       amazon.aws.aws_s3:
@@ -49,3 +104,13 @@
         aws_access_key: "{{ minio_access_key }}"
         aws_secret_key: "{{ minio_secret_key }}"
         s3_url: "{{ minio_endpoint_url }}"
+      ignore_errors: yes
+
+    - name: Debug Minio upload
+      debug:
+        msg: "Logs uploaded to Minio bucket {{ minio_bucket }} successfully."
+
+    - name: Error if upload to Minio fails
+      fail:
+        msg: "Failed to upload logs to Minio bucket {{ minio_bucket }}."
+      when: log_file.stat.exists == false
