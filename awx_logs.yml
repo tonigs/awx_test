@@ -2,6 +2,9 @@
 - name: Capture logs from Kubernetes pod and upload to Minio
   hosts: localhost
   gather_facts: no
+  collections:
+    - community.kubernetes
+    - amazon.aws
   vars:
     namespace: "{{ namespace }}"
     pod_name: "{{ pod_name }}"
