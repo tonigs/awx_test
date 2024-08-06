@@ -12,37 +12,38 @@
     minio_access_key: "{{ minio_access_key }}"
     minio_secret_key: "{{ minio_secret_key }}"
     minio_endpoint_url: "http://minio-service:9000"  # Replace with your Minio service URL
+    log_file_path: "/tmp/{{ pod_name }}_logs.txt"
 
   tasks:
-    - name: Capture logs from Kubernetes pod
-      k8s_info:
+    - name: Ensure kubectl is installed
+      command: "which kubectl"
+      register: kubectl_check
+      failed_when: kubectl_check.rc != 0
+
+    - name: Get the list of containers in the pod
+      community.kubernetes.k8s_info:
         api_version: v1
         kind: Pod
         namespace: "{{ namespace }}"
         name: "{{ pod_name }}"
       register: pod_info
 
-    - name: Fetch logs from pod
-      k8s_exec:
-        namespace: "{{ namespace }}"
-        pod: "{{ pod_name }}"
-        command: cat
-        container: "{{ item.name }}"
-      with_items: "{{ pod_info.resources | map(attribute='spec.containers') | list | flatten }}"
+    - name: Fetch logs from each container
+      command: >
+        kubectl logs -n {{ namespace }} {{ pod_name }} -c {{ item.name }}
+      loop: "{{ pod_info.resources[0].spec.containers }}"
       register: pod_logs
 
     - name: Save logs to file
       copy:
-        content: "{{ item.stdout }}"
-        dest: "/tmp/{{ pod_name }}_logs.txt"
-      with_items: "{{ pod_logs.results }}"
-      when: item.changed
+        content: "{{ pod_logs.results | map(attribute='stdout') | join('\n') }}"
+        dest: "{{ log_file_path }}"
 
     - name: Upload logs to Minio
-      aws_s3:
+      amazon.aws.aws_s3:
         bucket: "{{ minio_bucket }}"
         object: "{{ pod_name }}_logs.txt"
-        src: "/tmp/{{ pod_name }}_logs.txt"
+        src: "{{ log_file_path }}"
         mode: put
       vars:
         aws_access_key: "{{ minio_access_key }}"
